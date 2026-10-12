@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Meteor Fracture</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #08060c;
+      color: #f4fff9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      display: flex;
+      width: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      padding: max(24px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+      background: #17101d url('/assets/darkPurple.png') center / cover fixed;
+      text-align: center;
+      touch-action: none;
+    }
+    .remote-card {
+      display: contents;
+    }
+    h1 {
+      width: 100%;
+      margin: 12px 0 0;
+      color: #f4fff9;
+      font-size: clamp(25px, 7vw, 34px);
+      line-height: 1.1;
+      letter-spacing: 0.07em;
+      text-shadow: 0 0 16px rgba(0, 255, 136, 0.38);
+    }
+    #status {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      clip-path: inset(50%);
+      border: 0;
+    }
+    #fireBtn {
+      width: min(76vw, 340px, 48vh);
+      aspect-ratio: 1;
+      margin: auto 0;
+      border: 3px solid rgba(0, 255, 136, 0.92);
+      border-radius: 50%;
+      background:
+        linear-gradient(rgba(0, 255, 136, 0.18), rgba(0, 70, 42, 0.34)),
+        url('/assets/Building/spaceBuilding_008.png') center / 100% 100% no-repeat;
+      color: #f3fff9;
+      font: inherit;
+      font-size: clamp(32px, 10vw, 44px);
+      font-weight: 900;
+      letter-spacing: 0.13em;
+      text-shadow: 0 2px 10px #000, 0 0 12px #000;
+      box-shadow: 0 0 24px rgba(0, 255, 136, 0.34), inset 0 0 22px rgba(0, 0, 0, 0.42);
+      touch-action: manipulation;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+    #fireBtn:active:not(:disabled) {
+      transform: scale(0.96);
+      box-shadow: 0 0 38px rgba(0, 255, 136, 0.62), inset 0 0 22px rgba(0, 0, 0, 0.25);
+    }
+    #fireBtn:disabled {
+      border-color: rgba(0, 255, 136, 0.45);
+      box-shadow: none;
+      filter: brightness(0.72) saturate(0.85);
+    }
+    #centerAimBtn {
+      width: min(76vw, 340px);
+      min-height: 56px;
+      margin: 0 0 max(12px, env(safe-area-inset-bottom));
+      border: 2px solid rgba(0, 255, 136, 0.78);
+      border-radius: 12px;
+      background: linear-gradient(rgba(0, 255, 136, 0.14), rgba(0, 55, 35, 0.7)),
+        url('/assets/Building/spaceBuilding_008.png') center / cover;
+      color: #f3fff9;
+      font: inherit;
+      font-size: 16px;
+      font-weight: 850;
+      letter-spacing: 0.09em;
+      text-shadow: 0 2px 8px #000;
+      box-shadow: 0 0 15px rgba(0, 255, 136, 0.22), inset 0 0 16px rgba(0, 0, 0, 0.45);
+      touch-action: manipulation;
+    }
+    #centerAimBtn:active:not(:disabled) {
+      background-color: rgba(0, 255, 136, 0.28);
+      box-shadow: 0 0 25px rgba(0, 255, 136, 0.5);
+    }
+    #centerAimBtn:disabled {
+      opacity: 0.5;
+      filter: saturate(0.6);
+    }
+    @media (max-height: 560px) {
+      #fireBtn { width: min(54vh, 240px); }
+      #centerAimBtn { min-height: 48px; margin-bottom: 4px; }
+      h1 { margin-top: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="remote-card">
+    <h1>METEOR FRACTURE</h1>
+    <div id="status" role="status" aria-live="polite">Connecting to computer...</div>
+    <button id="fireBtn" disabled>FIRE</button>
+    <button id="centerAimBtn" type="button" disabled>CENTER AIM</button>
+  </main>
+
+  <script>
+    const room = new URLSearchParams(window.location.search).get('room');
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${location.host}`);
+    const statusDiv = document.getElementById('status');
+    const fireBtn = document.getElementById('fireBtn');
+    const centerAimBtn = document.getElementById('centerAimBtn');
+
+    let connected = false;
+    let aimEnabled = false;
+    let sensitivity = 0.35;
+    let calibration = null;
+    let latestOrientation = null;
+    let centerAimCountdown = null;
+    let centerAimCompleteTimeout = null;
+    let smoothX = 0.5;
+    let smoothY = 0.5;
+    const DEGREES_FROM_CENTER_X = 15;
+    const DEGREES_FROM_CENTER_Y = 22;
+    const DEADZONE = 0.3;
+
+    ws.onopen = () => {
+      if (!room) {
+        statusDiv.textContent = 'Invalid connection link. Scan the computer QR code.';
+        return;
+      }
+      statusDiv.textContent = 'Waiting for computer...';
+      ws.send(JSON.stringify({ type: 'JOIN_ROOM', room }));
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'CONNECTED') {
+        connected = true;
+        fireBtn.disabled = false;
+        centerAimBtn.disabled = false;
+        statusDiv.textContent = 'Connected — tilt to aim, tap FIRE';
+      } else if (data.type === 'SENSITIVITY') {
+        const value = Number(data.sensitivity);
+        if (Number.isFinite(value)) sensitivity = Math.max(0.1, Math.min(3, value));
+      } else if (data.type === 'ROOM_NOT_FOUND') {
+        statusDiv.textContent = 'Computer room not found. Scan its current QR code.';
+      } else if (data.type === 'QUIT') {
+        connected = false;
+        aimEnabled = false;
+        fireBtn.disabled = true;
+        centerAimBtn.disabled = true;
+        calibration = null;
+        latestOrientation = null;
+        clearCenterAimTimers();
+        window.removeEventListener('deviceorientation', handleOrientation, true);
+        statusDiv.textContent = 'Session ended — scan the computer QR code to reconnect';
+      }
+    };
+
+    ws.onerror = () => {
+      statusDiv.textContent = 'Connection error — scan the computer QR code again';
+    };
+
+    ws.onclose = () => {
+      connected = false;
+      aimEnabled = false;
+      calibration = null;
+      latestOrientation = null;
+      fireBtn.disabled = true;
+      centerAimBtn.disabled = true;
+      clearCenterAimTimers();
+      window.removeEventListener('deviceorientation', handleOrientation, true);
+      if (statusDiv.textContent.startsWith('Connected')) {
+        statusDiv.textContent = 'Disconnected — scan the computer QR code to reconnect';
+      }
+    };
+
+    function applyDeadzone(value) {
+      if (Math.abs(value) <= DEADZONE) return 0;
+      return Math.sign(value) * (Math.abs(value) - DEADZONE);
+    }
+
+    function handleOrientation(event) {
+      if (event.alpha === null || event.beta === null) return;
+      latestOrientation = { alpha: event.alpha, beta: event.beta };
+      if (!calibration) calibration = { alpha: event.alpha, beta: event.beta };
+
+      const diffAlpha = (event.alpha - calibration.alpha + 540) % 360 - 180;
+      const tiltX = -applyDeadzone(diffAlpha);
+      const tiltY = -applyDeadzone(event.beta - calibration.beta);
+
+      const targetX = Math.max(0, Math.min(1, 0.5 + (tiltX / DEGREES_FROM_CENTER_X) * sensitivity));
+      const targetY = Math.max(0, Math.min(1, 0.5 + (tiltY / DEGREES_FROM_CENTER_Y) * sensitivity));
+
+      // Smoothed interpolation prevents high-speed edge jitter
+      smoothX += (targetX - smoothX) * 0.35;
+      smoothY += (targetY - smoothY) * 0.35;
+
+      if (connected && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'POINTER_POSITION', room, x: smoothX, y: smoothY }));
+      }
+    }
+
+    async function enableAim() {
+      if (aimEnabled) return true;
+      if (typeof DeviceOrientationEvent === 'undefined') {
+        statusDiv.textContent = 'This phone does not provide motion controls';
+        return false;
+      }
+
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission !== 'granted') {
+            statusDiv.textContent = 'Allow motion access, then tap FIRE again';
+            return false;
+          }
+        } catch (error) {
+          console.error(error);
+          statusDiv.textContent = 'Could not enable motion controls';
+          return false;
+        }
+      }
+
+      aimEnabled = true;
+      calibration = null;
+      window.addEventListener('deviceorientation', handleOrientation, true);
+      return true;
+    }
+
+    function clearCenterAimTimers() {
+      if (centerAimCountdown !== null) {
+        window.clearInterval(centerAimCountdown);
+        centerAimCountdown = null;
+      }
+      if (centerAimCompleteTimeout !== null) {
+        window.clearTimeout(centerAimCompleteTimeout);
+        centerAimCompleteTimeout = null;
+      }
+      centerAimBtn.disabled = !connected;
+      centerAimBtn.textContent = 'CENTER AIM';
+    }
+
+    centerAimBtn.addEventListener('click', async () => {
+      if (!connected || centerAimCountdown !== null) return;
+      if (!await enableAim()) return;
+
+      if (centerAimCompleteTimeout !== null) {
+        window.clearTimeout(centerAimCompleteTimeout);
+        centerAimCompleteTimeout = null;
+      }
+      let secondsRemaining = 5;
+      centerAimBtn.disabled = true;
+      centerAimBtn.textContent = String(secondsRemaining);
+      statusDiv.textContent = 'Keep the phone in the position you want centered';
+
+      centerAimCountdown = window.setInterval(() => {
+        secondsRemaining--;
+        centerAimBtn.textContent = String(secondsRemaining);
+        if (secondsRemaining > 0) return;
+
+        window.clearInterval(centerAimCountdown);
+        centerAimCountdown = null;
+        if (!latestOrientation) {
+          statusDiv.textContent = 'No phone orientation detected';
+          centerAimBtn.textContent = 'CENTER AIM';
+          centerAimBtn.disabled = !connected;
+          return;
+        }
+
+        calibration = { ...latestOrientation };
+        smoothX = 0.5;
+        smoothY = 0.5;
+        if (connected && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'POINTER_POSITION', room, x: 0.5, y: 0.5 }));
+        }
+        statusDiv.textContent = 'Aim centered';
+        centerAimBtnComplete();
+      }, 1000);
+    });
+
+    function centerAimBtnComplete() {
+      centerAimCompleteTimeout = window.setTimeout(() => {
+        centerAimCompleteTimeout = null;
+        centerAimBtn.textContent = 'CENTER AIM';
+        centerAimBtn.disabled = !connected;
+      }, 800);
+    }
+
+    fireBtn.addEventListener('click', async () => {
+      if (!connected) return;
+      const aimingWasEnabled = aimEnabled;
+      if (!await enableAim()) return;
+      if (!aimingWasEnabled) {
+        statusDiv.textContent = 'Aim enabled — tilt to aim, tap FIRE to shoot';
+        return;
+      }
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'FIRE', room }));
+      }
+    });
+  </script>
+</body>
+</html>
