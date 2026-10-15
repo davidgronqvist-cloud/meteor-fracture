@@ -86,9 +86,12 @@
       z-index: 1;
       display: none;
       background: url('/assets/target_b.png') center / contain no-repeat;
-      filter: drop-shadow(0 0 5px rgba(0, 255, 136, 0.75));
       transform: translate(-50%, -50%);
       pointer-events: none;
+    }
+    #scoreEntryPanel button.is-aimed {
+      border-color: #55ffff;
+      box-shadow: 0 0 0 3px rgba(85, 255, 255, 0.3), 0 0 18px rgba(85, 255, 255, 0.55);
     }
     #scoreEntry.open,
     #scoreEntry.open * { cursor: none !important; }
@@ -898,6 +901,15 @@
         player.x * canvas.clientWidth / canvas.width - overlayRect.left}px`;
       scoreEntryAim.style.top = `${canvasRect.top + canvas.clientTop +
         player.y * canvas.clientHeight / canvas.height - overlayRect.top}px`;
+
+      const aimX = canvasRect.left + canvas.clientLeft + player.x * canvas.clientWidth / canvas.width;
+      const aimY = canvasRect.top + canvas.clientTop + player.y * canvas.clientHeight / canvas.height;
+      for (const button of [scoreEntryCancel, scoreEntrySubmit]) {
+        const buttonRect = button.getBoundingClientRect();
+        button.classList.toggle('is-aimed',
+          aimX >= buttonRect.left && aimX <= buttonRect.right &&
+          aimY >= buttonRect.top && aimY <= buttonRect.bottom);
+      }
     }
 
     async function submitRunScore(name) {
@@ -2103,7 +2115,22 @@
     }
 
     function handleFireAction() {
-      if (scoreEntry && scoreEntry.classList.contains('open')) return;
+      if (scoreEntry && scoreEntry.classList.contains('open')) {
+        if (!mouseMode) {
+          const canvasRect = canvas.getBoundingClientRect();
+          const aimX = canvasRect.left + canvas.clientLeft + player.x * canvas.clientWidth / canvas.width;
+          const aimY = canvasRect.top + canvas.clientTop + player.y * canvas.clientHeight / canvas.height;
+          for (const button of [scoreEntryCancel, scoreEntrySubmit]) {
+            const buttonRect = button.getBoundingClientRect();
+            if (aimX >= buttonRect.left && aimX <= buttonRect.right &&
+              aimY >= buttonRect.top && aimY <= buttonRect.bottom && !button.disabled) {
+              button.click();
+              return;
+            }
+          }
+        }
+        return;
+      }
 
       if (screen === 'game') {
         playLaserSound();

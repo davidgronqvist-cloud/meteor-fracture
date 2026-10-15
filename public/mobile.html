@@ -225,7 +225,7 @@
             ws.readyState === WebSocket.OPEN) {
             const diffAlpha = (latestOrientation.alpha - calibration.alpha + 540) % 360 - 180;
             const tiltX = -applyDeadzone(diffAlpha);
-            const tiltY = applyDeadzone(latestOrientation.beta - calibration.beta);
+            const tiltY = -applyDeadzone(latestOrientation.beta - calibration.beta);
 
             const targetX = Math.max(0, Math.min(1, 0.5 + (tiltX / DEGREES_FROM_CENTER_X) * sensitivity));
             const targetY = Math.max(0, Math.min(1, 0.5 + (tiltY / DEGREES_FROM_CENTER_Y) * sensitivity));
