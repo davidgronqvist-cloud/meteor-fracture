@@ -85,26 +85,13 @@
       position: absolute;
       z-index: 1;
       display: none;
-      width: 38px;
-      height: 38px;
-      box-sizing: border-box;
-      border: 2px solid #00ff88;
-      border-radius: 50%;
-      box-shadow: 0 0 13px rgba(0, 255, 136, 0.9), inset 0 0 8px rgba(0, 255, 136, 0.35);
+      background: url('/assets/target_b.png') center / contain no-repeat;
+      filter: drop-shadow(0 0 5px rgba(0, 255, 136, 0.75));
       transform: translate(-50%, -50%);
       pointer-events: none;
     }
-    #scoreEntryAim::before,
-    #scoreEntryAim::after {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      content: "";
-      background: #baffd9;
-      transform: translate(-50%, -50%);
-    }
-    #scoreEntryAim::before { width: 2px; height: 48px; }
-    #scoreEntryAim::after { width: 48px; height: 2px; }
+    #scoreEntry.open,
+    #scoreEntry.open * { cursor: none !important; }
     #scoreEntryPanel {
       width: min(430px, 100%);
       box-sizing: border-box;
@@ -877,7 +864,7 @@
     function openScoreEntry() {
       if (isDevModeEnabled) return;
       if (scoreSubmittedForRun || scoreSubmissionInProgress) return;
-      document.body.style.cursor = mouseMode ? 'default' : 'none';
+      document.body.style.cursor = 'none';
       scoreEntryHint.textContent = `Submit your run score of ${score.toLocaleString()} points.`;
       scoreEntryError.textContent = '';
       scoreNameInput.value = '';
@@ -895,14 +882,18 @@
     }
 
     function updateScoreEntryAim() {
-      if (!scoreEntry.classList.contains('open') || mouseMode) {
+      if (!scoreEntry.classList.contains('open')) {
         scoreEntryAim.style.display = 'none';
         return;
       }
 
       const canvasRect = canvas.getBoundingClientRect();
       const overlayRect = scoreEntry.getBoundingClientRect();
+      const reticleRadius = screen === 'game' || screen === 'upgrades' ? player.radius : 20;
+      const reticleSize = reticleRadius * 2.4 * canvas.clientWidth / canvas.width;
       scoreEntryAim.style.display = 'block';
+      scoreEntryAim.style.width = `${reticleSize}px`;
+      scoreEntryAim.style.height = `${reticleSize}px`;
       scoreEntryAim.style.left = `${canvasRect.left + canvas.clientLeft +
         player.x * canvas.clientWidth / canvas.width - overlayRect.left}px`;
       scoreEntryAim.style.top = `${canvasRect.top + canvas.clientTop +
@@ -2112,6 +2103,8 @@
     }
 
     function handleFireAction() {
+      if (scoreEntry && scoreEntry.classList.contains('open')) return;
+
       if (screen === 'game') {
         playLaserSound();
         laserFlashes.push({ x: player.x, y: player.y, r: player.radius * 1.5, life: 1.0 });

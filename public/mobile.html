@@ -146,9 +146,13 @@
     let centerAimCompleteTimeout = null;
     let smoothX = 0.5;
     let smoothY = 0.5;
+    let lastSentX = -1;
+    let lastSentY = -1;
+    let lastPositionFrameAt = 0;
     const DEGREES_FROM_CENTER_X = 15;
     const DEGREES_FROM_CENTER_Y = 22;
     const DEADZONE = 0.3;
+    const POSITION_SEND_INTERVAL_MS = 1000 / 60;
 
     ws.onopen = () => {
       if (!room) {
@@ -211,22 +215,37 @@
       if (event.alpha === null || event.beta === null) return;
       latestOrientation = { alpha: event.alpha, beta: event.beta };
       if (!calibration) calibration = { alpha: event.alpha, beta: event.beta };
-
-      const diffAlpha = (event.alpha - calibration.alpha + 540) % 360 - 180;
-      const tiltX = -applyDeadzone(diffAlpha);
-      const tiltY = -applyDeadzone(event.beta - calibration.beta);
-
-      const targetX = Math.max(0, Math.min(1, 0.5 + (tiltX / DEGREES_FROM_CENTER_X) * sensitivity));
-      const targetY = Math.max(0, Math.min(1, 0.5 + (tiltY / DEGREES_FROM_CENTER_Y) * sensitivity));
-
-      // Smoothed interpolation prevents high-speed edge jitter
-      smoothX += (targetX - smoothX) * 0.35;
-      smoothY += (targetY - smoothY) * 0.35;
-
-      if (connected && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'POINTER_POSITION', room, x: smoothX, y: smoothY }));
-      }
     }
+
+    function startPositionLoop() {
+      function sendPosition(timestamp) {
+        if (timestamp - lastPositionFrameAt >= POSITION_SEND_INTERVAL_MS) {
+          lastPositionFrameAt = timestamp;
+          if (connected && aimEnabled && latestOrientation && calibration &&
+            ws.readyState === WebSocket.OPEN) {
+            const diffAlpha = (latestOrientation.alpha - calibration.alpha + 540) % 360 - 180;
+            const tiltX = -applyDeadzone(diffAlpha);
+            const tiltY = applyDeadzone(latestOrientation.beta - calibration.beta);
+
+            const targetX = Math.max(0, Math.min(1, 0.5 + (tiltX / DEGREES_FROM_CENTER_X) * sensitivity));
+            const targetY = Math.max(0, Math.min(1, 0.5 + (tiltY / DEGREES_FROM_CENTER_Y) * sensitivity));
+
+            smoothX += (targetX - smoothX) * 0.4;
+            smoothY += (targetY - smoothY) * 0.4;
+
+            if (Math.abs(smoothX - lastSentX) > 0.001 || Math.abs(smoothY - lastSentY) > 0.001) {
+              lastSentX = smoothX;
+              lastSentY = smoothY;
+              ws.send(JSON.stringify({ type: 'POINTER_POSITION', room, x: smoothX, y: smoothY }));
+            }
+          }
+        }
+        requestAnimationFrame(sendPosition);
+      }
+      requestAnimationFrame(sendPosition);
+    }
+
+    startPositionLoop();
 
     async function enableAim() {
       if (aimEnabled) return true;
@@ -298,6 +317,8 @@
         calibration = { ...latestOrientation };
         smoothX = 0.5;
         smoothY = 0.5;
+        lastSentX = 0.5;
+        lastSentY = 0.5;
         if (connected && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'POINTER_POSITION', room, x: 0.5, y: 0.5 }));
         }
