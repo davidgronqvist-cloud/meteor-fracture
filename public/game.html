@@ -81,6 +81,30 @@
       backdrop-filter: blur(5px);
     }
     #scoreEntry.open { display: flex; }
+    #scoreEntryAim {
+      position: absolute;
+      z-index: 1;
+      display: none;
+      width: 38px;
+      height: 38px;
+      box-sizing: border-box;
+      border: 2px solid #00ff88;
+      border-radius: 50%;
+      box-shadow: 0 0 13px rgba(0, 255, 136, 0.9), inset 0 0 8px rgba(0, 255, 136, 0.35);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    #scoreEntryAim::before,
+    #scoreEntryAim::after {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      content: "";
+      background: #baffd9;
+      transform: translate(-50%, -50%);
+    }
+    #scoreEntryAim::before { width: 2px; height: 48px; }
+    #scoreEntryAim::after { width: 48px; height: 2px; }
     #scoreEntryPanel {
       width: min(430px, 100%);
       box-sizing: border-box;
@@ -165,6 +189,7 @@
 
     <canvas id="gameCanvas" width="800" height="600"></canvas>
     <div id="scoreEntry" aria-hidden="true">
+      <div id="scoreEntryAim" aria-hidden="true"></div>
       <form id="scoreEntryPanel">
         <p id="scoreEntryKicker">PILOT RECORD</p>
         <h2>ADD TO LEADERBOARD</h2>
@@ -193,6 +218,7 @@
     const scoreEntryError = document.getElementById('scoreEntryError');
     const scoreEntrySubmit = document.getElementById('scoreEntrySubmit');
     const scoreEntryCancel = document.getElementById('scoreEntryCancel');
+    const scoreEntryAim = document.getElementById('scoreEntryAim');
 
     // Safe image rendering wrapper
     function safeDrawImage(img, ...args) {
@@ -533,6 +559,7 @@
     // Game & Stats state
     let score = 0;
     let highScore = 0;
+    let highScoreInputMode = 'PH';
     function getScorePlayerId() {
       const storageKey = 'gyroGameScorePlayerId';
       let playerId;
@@ -555,6 +582,7 @@
     const scorePlayerId = getScorePlayerId();
     let scoreSubmittedForRun = false;
     let scoreSubmissionInProgress = false;
+    let submittedPlayerMode = 'PH';
     let submittedPlayerName = 'YOU';
     let leaderboardTopScores = [];
     let leaderboardSubmittedScores = [];
@@ -624,6 +652,8 @@
     const BOSS_VICTORY_DELAY_MS = 2000;
     const BOSS_VISUAL_SCALE = 0.85;
     const BOSS_VISUAL_SCALE_X = BOSS_VISUAL_SCALE * 1.15;
+    const BOSS_BODY_CENTER_OFFSET_Y = -45;
+    const BOSS_BODY_COLLISION_RADIUS_X = 200;
     const BOSS_ARM_ATTACK_DURATION = 72;
     const DEFENSE_SHIELD_REGEN_MS = 10000;
     const MAX_PLAYER_SHIELDS = 10;
@@ -673,17 +703,30 @@
       targetY = player.y = canvas.height / 2;
     });
 
-    canvas.addEventListener('mousemove', (e) => {
-      if (!mouseMode) return;
+    function getMouseCanvasPosition(event) {
       const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      targetX = (e.clientX - rect.left) * scaleX;
-      targetY = (e.clientY - rect.top) * scaleY;
+      const left = rect.left + canvas.clientLeft;
+      const top = rect.top + canvas.clientTop;
+      if (event.clientX < left || event.clientX > left + canvas.clientWidth ||
+        event.clientY < top || event.clientY > top + canvas.clientHeight) {
+        return null;
+      }
+      return {
+        x: (event.clientX - left) * canvas.width / canvas.clientWidth,
+        y: (event.clientY - top) * canvas.height / canvas.clientHeight
+      };
+    }
+
+    window.addEventListener('mousemove', (event) => {
+      if (!mouseMode) return;
+      const point = getMouseCanvasPosition(event);
+      if (!point) return;
+      targetX = Math.min(Math.max(point.x, player.radius), canvas.width - player.radius);
+      targetY = Math.min(Math.max(point.y, player.radius), canvas.height - player.radius);
     });
 
-    canvas.addEventListener('click', () => {
-      if (!mouseMode) return;
+    canvas.addEventListener('click', (event) => {
+      if (!mouseMode || !getMouseCanvasPosition(event)) return;
       handleFireAction();
     });
 
@@ -823,6 +866,7 @@
 
         leaderboardTopScores = topScores;
         leaderboardSubmittedScores = submittedScores;
+        submittedPlayerMode = submittedScores[0]?.inputMode === 'CU' ? 'CU' : 'PH';
         leaderboardStatus = topScores.length || submittedScores.length ? '' : 'No scores submitted yet.';
       } catch (error) {
         leaderboardStatus = 'Could not load scores. Try again later.';
@@ -833,6 +877,7 @@
     function openScoreEntry() {
       if (isDevModeEnabled) return;
       if (scoreSubmittedForRun || scoreSubmissionInProgress) return;
+      document.body.style.cursor = mouseMode ? 'default' : 'none';
       scoreEntryHint.textContent = `Submit your run score of ${score.toLocaleString()} points.`;
       scoreEntryError.textContent = '';
       scoreNameInput.value = '';
@@ -845,6 +890,23 @@
       scoreEntry.classList.remove('open');
       scoreEntry.setAttribute('aria-hidden', 'true');
       scoreEntryError.textContent = '';
+      document.body.style.cursor = screen === 'connect' ? 'default' : 'none';
+      scoreEntryAim.style.display = 'none';
+    }
+
+    function updateScoreEntryAim() {
+      if (!scoreEntry.classList.contains('open') || mouseMode) {
+        scoreEntryAim.style.display = 'none';
+        return;
+      }
+
+      const canvasRect = canvas.getBoundingClientRect();
+      const overlayRect = scoreEntry.getBoundingClientRect();
+      scoreEntryAim.style.display = 'block';
+      scoreEntryAim.style.left = `${canvasRect.left + canvas.clientLeft +
+        player.x * canvas.clientWidth / canvas.width - overlayRect.left}px`;
+      scoreEntryAim.style.top = `${canvasRect.top + canvas.clientTop +
+        player.y * canvas.clientHeight / canvas.height - overlayRect.top}px`;
     }
 
     async function submitRunScore(name) {
@@ -864,7 +926,12 @@
         const response = await fetch('/api/scores', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, score, playerId: scorePlayerId })
+          body: JSON.stringify({
+            name,
+            score,
+            playerId: scorePlayerId,
+            inputMode: mouseMode ? 'CU' : 'PH'
+          })
         });
         const result = await response.json();
         if (!response.ok) {
@@ -872,6 +939,7 @@
         }
         leaderboardSubmittedScores.unshift(result.score);
         submittedPlayerName = name;
+        submittedPlayerMode = result.score.inputMode === 'CU' ? 'CU' : 'PH';
         leaderboardStatus = 'Score submitted successfully!';
         scoreSubmittedForRun = true;
         console.log('Score submitted successfully:', result.score);
@@ -932,6 +1000,7 @@
       score = startScore;
       scoreSubmittedForRun = false;
       highScore = 0;
+      highScoreInputMode = mouseMode ? 'CU' : 'PH';
       closeScoreEntry();
       shields = 5;
       maxShields = 5;
@@ -1263,10 +1332,10 @@
         this.hurtTimer = 0;
         this.attackAnimTimer = 0;
         
-        this.offsetX = this.direction * 224;
-        this.offsetY = 204;
-        this.width = 72;
-        this.height = 76;
+        this.offsetX = this.direction * 280;
+        this.offsetY = 120;
+        this.width = 100;
+        this.height = 110;
         this.phase = side === 'left' ? 0 : Math.PI;
       }
 
@@ -1284,20 +1353,20 @@
             : 1 - ease(Math.min(1, (attackProgress - 0.52) / 0.48));
         const idleBob = Math.sin(time) * 5;
         const isSplitArm = this.attackType === 'splitMeteor';
-        const punchReach = isSplitArm ? strike * 155 : 0;
+        const punchReach = isSplitArm ? strike * 55 : 0;
         const punchTuck = isSplitArm ? anticipation * 40 : 0;
         const rainSweep = isSplitArm ? 0 : strike * 105;
         const rainLift = isSplitArm ? 0 : anticipation * 90;
 
         return {
-          shoulder: { x: this.boss.x + this.boss.hurtOffsetX + this.direction * 125, y: this.boss.y + this.boss.hurtOffsetY - 25 },
+          shoulder: { x: this.boss.x + this.boss.hurtOffsetX + this.direction * 200, y: this.boss.y + this.boss.hurtOffsetY - 90 },
           elbow: {
-            x: this.boss.x + this.boss.hurtOffsetX + this.direction * (195 - punchTuck * 0.35 + punchReach * 0.45 + rainSweep * 0.3),
-            y: this.boss.y + this.boss.hurtOffsetY + 45 + idleBob - punchReach * 0.16 - rainLift * 0.8 - rainSweep * 0.25
+            x: this.boss.x + this.boss.hurtOffsetX + this.direction * (320 - punchTuck * 0.35 + punchReach * 0.45 + rainSweep * 0.3),
+            y: this.boss.y + this.boss.hurtOffsetY + 60 + idleBob - punchReach * 0.16 - rainLift * 0.8 - rainSweep * 0.25
           },
           hand: {
-            x: this.boss.x + this.boss.hurtOffsetX + this.direction * (245 + punchReach - punchTuck + rainSweep * 0.5),
-            y: this.boss.y + this.boss.hurtOffsetY + 130 + idleBob - punchReach * 0.38 - rainLift + rainSweep * 0.7
+            x: this.boss.x + this.boss.hurtOffsetX + this.direction * (280 + punchReach - punchTuck + rainSweep * 0.5),
+            y: this.boss.y + this.boss.hurtOffsetY + 138 + idleBob - punchReach * 0.38 - rainLift + rainSweep * 0.7
           }
         };
       }
@@ -1358,7 +1427,7 @@
         if (!this.isAlive) return;
 
         const { shoulder, elbow, hand } = this.getArmPoints();
-        const armImage = bossMeteorImgs[1];
+        const armImages = meteorTiers[1].loadedImages;
 
         ctx.save();
         if (this.hurtTimer > 0) {
@@ -1388,26 +1457,26 @@
                 this.direction * (index % 2 ? offset : -offset),
               y: inverse * inverse * start.y + 2 * inverse * progress * control.y + progress * progress * end.y
             };
-            const image = bossMeteorImgs[1];
+            const image = armImages[index % 2];
             drawRock(point, size * (index % 2 ? 0.92 : 1), this.direction * (index - 1) * 0.12, image);
           }
         };
 
         const firstControl = {
-          x: this.boss.x + this.boss.hurtOffsetX + this.direction * 170,
+          x: this.boss.x + this.boss.hurtOffsetX + this.direction * 250,
           y: this.boss.y + this.boss.hurtOffsetY - 24
         };
         const secondControl = {
-          x: this.boss.x + this.boss.hurtOffsetX + this.direction * 225,
-          y: this.boss.y + this.boss.hurtOffsetY + 88
+          x: this.boss.x + this.boss.hurtOffsetX + this.direction * 330,
+          y: this.boss.y + this.boss.hurtOffsetY + 105
         };
-        drawRockChain(shoulder, firstControl, elbow, 5, 72, 6);
-        drawRockChain(elbow, secondControl, hand, 5, 66, 5);
-        drawRock(elbow, 80, this.direction * -0.2, armImage);
-        drawRock(hand, 96, this.direction * 0.18, bossMeteorImgs[3]);
-        drawRock({ x: hand.x - this.direction * 22, y: hand.y - 10 }, 66, -this.direction * 0.14, bossMeteorImgs[2]);
+        drawRockChain(shoulder, firstControl, elbow, 4, 104, 6);
+        drawRockChain(elbow, secondControl, hand, 4, 94, 5);
+        drawRock(elbow, 104, this.direction * -0.2, armImages[0]);
+        drawRock(hand, 124, this.direction * 0.18, meteorTiers[0].loadedImages[3]);
+        drawRock({ x: hand.x - this.direction * 22, y: hand.y - 10 }, 82, -this.direction * 0.14, meteorTiers[0].loadedImages[2]);
         this.getFingerPoints(hand).forEach((finger, index) => {
-          drawRock(finger, 38, (index - 1.5) * 0.08, bossMeteorImgs[0]);
+          drawRock(finger, 46, (index - 1.5) * 0.08, meteorTiers[0].loadedImages[0]);
         });
 
         if (this.hp < this.maxHp) {
@@ -1445,7 +1514,7 @@
         this.outroBursts = 0;
         this.hp = 250;
         this.maxHp = 250;
-        this.radius = 185 * BOSS_VISUAL_SCALE;
+        this.radius = 130;
         
         // Boss Visual / Hurt State
         this.hurtTimer = 0;
@@ -1502,14 +1571,18 @@
       }
 
       createDebris() {
-        const debrisRockImages = [...meteorTiers[0].loadedImages, ...bossMeteorImgs];
+        const debrisRockImages = [...meteorTiers[0].loadedImages, ...meteorTiers[1].loadedImages, ...bossMeteorImgs];
         const pieces = [
-          [-135, -88, 0], [-76, -126, 1], [0, -145, 2], [82, -122, 3], [142, -74, 0],
-          [-165, -15, 1], [-124, 78, 2], [-73, 134, 3], [0, 148, 0], [76, 128, 1],
-          [142, 70, 2], [170, 0, 3], [-86, 2, 0], [86, 9, 1], [0, 66, 2],
-          [-66, -66, 0, true], [66, -66, 1, true],
-          [-210, 24, 3], [-256, 101, 4], [-304, 204, 5], [-342, 260, 6],
-          [210, 24, 7], [256, 101, 8], [304, 204, 9], [342, 260, 10]
+          [-77, -198, 12], [77, -198, 13], [-56, -53, 14], [56, -53, 15],
+          [-145, -109, 8], [145, -109, 9], [-200, -74, 9], [200, -74, 8],
+          [-63, -142, 0, true], [63, -128, 1, true],
+          [-63, -32, 8], [63, -32, 9], [-52, 30, 8], [52, 30, 9], [0, 34, 2],
+          [-225, -86, 8], [-275, -26, 9], [-315, 42, 8], [-303, 96, 9],
+          [225, -86, 8], [275, -26, 9], [315, 42, 8], [303, 96, 9],
+          [-280, 138, 3], [-300, 128, 2],
+          [-316, 172, 0], [-300, 178, 1], [-276, 178, 0], [-260, 172, 1],
+          [280, 138, 3], [300, 128, 2],
+          [316, 172, 0], [300, 178, 1], [276, 178, 0], [260, 172, 1]
         ];
         this.debris = pieces.map(([offsetX, offsetY, imageIndex, isEye = false]) => {
           const length = Math.hypot(offsetX, offsetY) || 1;
@@ -1576,8 +1649,9 @@
           this.diveVelocity = 0.25;
           this.y += this.diveVelocity * frameScale;
           this.diveRotation += 0.0015 * frameScale;
-          if (defenseShipCollidesCircle(this.x, this.y, this.radius)) {
-            applyDefenseShipHit(this.x, Math.min(this.y + this.radius, defenseShip.y - canvas.height * 0.048), 4.5, now, true);
+          const collisionY = this.y + BOSS_BODY_CENTER_OFFSET_Y;
+          if (defenseShipCollidesCircle(this.x, collisionY, this.radius)) {
+            applyDefenseShipHit(this.x, Math.min(collisionY + this.radius, defenseShip.y - canvas.height * 0.048), 4.5, now, true);
             this.phase = 'crashed';
           }
           return;
@@ -1731,21 +1805,27 @@
         }
       }
 
+      getMouthPosition() {
+        return {
+          x: this.x + this.hurtOffsetX * BOSS_VISUAL_SCALE_X,
+          y: this.y + (this.hurtOffsetY - 22) * BOSS_VISUAL_SCALE
+        };
+      }
+
       executeShipSwarm(projectileList) {
-        const mouthX = this.x + this.hurtOffsetX * BOSS_VISUAL_SCALE_X;
-        const mouthY = this.y + this.hurtOffsetY * BOSS_VISUAL_SCALE + 87 * BOSS_VISUAL_SCALE;
+        const mouth = this.getMouthPosition();
         const count = 9;
         const targetX = defenseShip.x;
         const targetY = defenseShip.y - 36;
-        const aimAngle = Math.atan2(targetY - mouthY, targetX - mouthX);
+        const aimAngle = Math.atan2(targetY - mouth.y, targetX - mouth.x);
         const spread = 0.78;
 
         for (let i = 0; i < count; i++) {
           const angle = aimAngle + (i - (count - 1) / 2) * (spread / (count - 1));
           const speed = 2.1 + (i % 3) * 0.2;
           projectileList.push(new BrokenShipProjectile(
-            mouthX,
-            mouthY,
+            mouth.x,
+            mouth.y,
             Math.cos(angle) * speed,
             Math.sin(angle) * speed,
             i
@@ -1762,7 +1842,8 @@
 
       // --- Split Meteor Logic ---
       executeSplitMeteor(projectileList) {
-        projectileList.push(new MeteorProjectile(this.x, this.y + 50 * BOSS_VISUAL_SCALE, {
+        const mouth = this.getMouthPosition();
+        projectileList.push(new MeteorProjectile(mouth.x, mouth.y + 18, {
           vy: 3,
           vx: 0,
           radius: 28,
@@ -1772,7 +1853,8 @@
       }
 
       executeBasicSpread(projectileList) {
-        spawnCompositeMeteor(this.x + (Math.random() - 0.5) * 100, this.y + 80 * BOSS_VISUAL_SCALE);
+        const mouth = this.getMouthPosition();
+        spawnCompositeMeteor(mouth.x + (Math.random() - 0.5) * 100, mouth.y + 18);
       }
 
       draw(ctx) {
@@ -1831,19 +1913,22 @@
         };
 
         const headPieces = [
-          [bossMeteorImgs[0], -70, -88, 176, 164, -0.08],
-          [bossMeteorImgs[1], 70, -88, 176, 164, 0.08],
-          [bossMeteorImgs[3], -70, 35, 176, 164, -0.06],
-          [bossMeteorImgs[2], 70, 35, 176, 164, 0.06]
+          [bossMeteorImgs[0], -77, -198, 256, 388, -0.03],
+          [bossMeteorImgs[1], 77, -198, 256, 388, 0.03],
+          [bossMeteorImgs[3], -56, -53, 266, 306, -0.04],
+          [bossMeteorImgs[2], 56, -53, 266, 306, 0.04]
         ];
         headPieces.forEach(([image, rockX, rockY, width, height, rotation]) => {
           drawBodyRock(image, rockX, rockY, width, height, rotation);
         });
-        [
-          [-132, -31, 92], [132, -31, 92],
-          [-118, 88, 86], [118, 88, 86], [0, -155, 96]
-        ].forEach(([rockX, rockY, size], index) => {
-          drawBodyRock(bossMeteorImgs[1], rockX, rockY, size, size * 0.92, (index - 2) * 0.08);
+        const headDetails = [
+          [meteorTiers[1].loadedImages[0], -145, -109, 102, 108, -0.4],
+          [meteorTiers[1].loadedImages[1], 145, -109, 102, 108, 0.4],
+          [meteorTiers[1].loadedImages[1], -200, -74, 123, 122, -0.24],
+          [meteorTiers[1].loadedImages[0], 200, -74, 123, 122, 0.24]
+        ];
+        headDetails.forEach(([image, rockX, rockY, width, height, rotation]) => {
+          drawBodyRock(image, rockX, rockY, width, height, rotation);
         });
 
         ctx.restore();
@@ -1853,14 +1938,13 @@
 
         {
           const mouthOpen = this.isChargingShipAttack ? this.chargeProgress : 0.08;
-          const mouthX = this.x + this.hurtOffsetX;
-          const mouthY = this.y + this.hurtOffsetY + 87;
-          const mouthWidth = 48 + mouthOpen * 37;
-          const mouthHeight = 5 + mouthOpen * 30;
-          const jawGap = mouthOpen * 32;
+          const mouthWidth = 88 + mouthOpen * 40;
+          const mouthHeight = 23 + mouthOpen * 30;
+          const jawGap = mouthOpen * 28;
 
           ctx.save();
-          ctx.translate(mouthX, mouthY);
+          ctx.translate(this.x + this.hurtOffsetX, this.y + this.hurtOffsetY);
+          ctx.translate(0, -22);
           ctx.shadowColor = '#ff572e';
           ctx.shadowBlur = this.isChargingShipAttack ? 22 : 0;
           ctx.fillStyle = '#130b13';
@@ -1869,19 +1953,19 @@
           ctx.fill();
           ctx.shadowBlur = 0;
 
-          drawBodyRock(bossMeteorImgs[1], -78, -mouthHeight - 15 - jawGap * 0.2, 70, 60, -0.14);
-          drawBodyRock(bossMeteorImgs[1], 78, -mouthHeight - 15 - jawGap * 0.2, 70, 60, 0.14);
-          drawBodyRock(bossMeteorImgs[1], -68, mouthHeight + 12 + jawGap, 68, 58, 0.18);
-          drawBodyRock(bossMeteorImgs[1], 68, mouthHeight + 12 + jawGap, 68, 58, -0.18);
-          drawBodyRock(bossMeteorImgs[2], 0, mouthHeight + 27 + jawGap, 70, 62);
+          drawBodyRock(meteorTiers[1].loadedImages[0], -63, -8 - jawGap * 0.2, 94, 78, -0.12);
+          drawBodyRock(meteorTiers[1].loadedImages[1], 63, -8 - jawGap * 0.2, 94, 78, 0.12);
+          drawBodyRock(meteorTiers[1].loadedImages[0], -52, mouthHeight + 8 + jawGap, 84, 72, 0.16);
+          drawBodyRock(meteorTiers[1].loadedImages[1], 52, mouthHeight + 8 + jawGap, 84, 72, -0.16);
+          drawBodyRock(meteorTiers[0].loadedImages[2], 0, mouthHeight + 14 + jawGap, 70, 62);
 
           for (let index = 0; index < 5; index++) {
             const toothX = (index - 2) * 28;
-            safeDrawImage(bossMouthToothImgs[index % bossMouthToothImgs.length], toothX - 14, -mouthHeight - 3 - jawGap * 0.35, 28, 27);
+            safeDrawImage(bossMouthToothImgs[index % bossMouthToothImgs.length], toothX - 14, -14 - jawGap * 0.35, 28, 27);
           }
           for (let index = 0; index < 4; index++) {
             const toothX = (index - 1.5) * 42;
-            safeDrawImage(bossMouthToothImgs[(index + 1) % bossMouthToothImgs.length], toothX - 12, mouthHeight - 22 + jawGap * 0.7, 24, 24);
+            safeDrawImage(bossMouthToothImgs[(index + 1) % bossMouthToothImgs.length], toothX - 12, 14 + jawGap * 0.7, 24, 24);
           }
           ctx.restore();
         }
@@ -1889,15 +1973,15 @@
         ctx.save();
         ctx.translate(this.x + this.hurtOffsetX, this.y + this.hurtOffsetY);
         const eyesFlashRed = this.isChargingShipAttack && Math.floor(performance.now() / 180) % 2 === 0;
-        this.drawRockEye(ctx, -66, -66, 45, this.eyeFrame, eyesFlashRed);
-        this.drawRockEye(ctx, 66, -66, 45, (this.eyeFrame + 2) % googlyEyeImgs.length, eyesFlashRed);
+        this.drawRockEye(ctx, -63, -142, 45, this.eyeFrame, eyesFlashRed);
+        this.drawRockEye(ctx, 63, -128, 45, (this.eyeFrame + 2) % googlyEyeImgs.length, eyesFlashRed);
 
         ctx.restore();
 
         ctx.restore();
 
         // Keep the boss health bar at normal screen size while scaling the boss artwork.
-        drawHpBar(canvas.width / 2 - 175, 28, 350, 14, this.hp, this.maxHp, 'METEOR TITAN');
+        drawHpBar(canvas.width / 2 - 175, 260, 350, 14, this.hp, this.maxHp, 'METEOR TITAN');
 
         ctx.restore();
       }
@@ -2195,11 +2279,11 @@
 
           // Main Boss Body Hit Check
           if (!hit && b.hp > 0) {
-            const bodyHitX = b.radius * (BOSS_VISUAL_SCALE_X / BOSS_VISUAL_SCALE) + player.radius;
+            const bodyHitX = BOSS_BODY_COLLISION_RADIUS_X + player.radius;
             const bodyHitY = b.radius + player.radius;
             const bodyHitDistance = Math.hypot(
               (player.x - b.x) / bodyHitX,
-              (player.y - b.y) / bodyHitY
+              (player.y - (b.y + BOSS_BODY_CENTER_OFFSET_Y)) / bodyHitY
             );
             if (bodyHitDistance <= 1) {
               hit = true;
@@ -2768,6 +2852,7 @@
       ctx.fillText('RANK / PLAYER', listX + 24, listY + 20);
       ctx.textAlign = 'right';
       ctx.fillText('SCORE', listX + listW - 24, listY + 20);
+      ctx.fillText('MODE', listX + listW - 88, listY + 20);
 
       ctx.save();
       ctx.beginPath();
@@ -2786,6 +2871,12 @@
         const rankLabel = entry.rank ? `#${entry.rank}` : 'YOU';
         ctx.fillText(`${rankLabel}  ${entry.name}`, listX + 24, rowY);
         ctx.textAlign = 'right';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillStyle = '#55ffff';
+        ctx.fillText(entry.inputMode === 'CU' ? 'CU' : 'PH', listX + listW - 88, rowY);
+        ctx.textAlign = 'right';
+        ctx.font = '15px sans-serif';
+        ctx.fillStyle = entry.isMine ? '#00FF88' : '#f4fff9';
         ctx.fillText(`${entry.score}`, listX + listW - 24, rowY);
       });
       ctx.restore();
@@ -2804,6 +2895,11 @@
       ctx.fillStyle = '#00FF88';
       ctx.fillText(submittedPlayerName, listX + 18, 445);
       ctx.textAlign = 'right';
+      ctx.fillStyle = '#55ffff';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(highScoreInputMode, listX + listW - 88, 445);
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillStyle = '#00FF88';
       ctx.fillText(highScore.toLocaleString(), listX + listW - 18, 445);
       ctx.textAlign = 'center';
       ctx.font = '14px sans-serif';
@@ -3692,6 +3788,7 @@
 
       ctx.restore();
 
+      updateScoreEntryAim();
       requestAnimationFrame(update);
     }
 

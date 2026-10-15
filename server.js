@@ -23,6 +23,7 @@ const scoreSchema = new mongoose.Schema({
   name: { type: String, required: true, maxlength: 12 },
   score: { type: Number, required: true },
   playerId: { type: String, required: true, index: true },
+  inputMode: { type: String, enum: ['PH', 'CU'], default: 'PH' },
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -35,11 +36,12 @@ app.get('/api/scores', async (req, res) => {
     const topScores = await Score.find()
       .sort({ score: -1, createdAt: 1 })
       .limit(10)
-      .select('name score');
+      .select('name score inputMode');
     res.json(topScores.map(entry => ({
       id: String(entry._id),
       name: entry.name,
-      score: entry.score
+      score: entry.score,
+      inputMode: entry.inputMode || 'PH'
     })));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch leaderboard scores.' });
@@ -56,11 +58,12 @@ app.get('/api/scores/submitted', async (req, res) => {
   try {
     const submittedScores = await Score.find({ playerId })
       .sort({ createdAt: -1 })
-      .select('name score createdAt');
+      .select('name score inputMode createdAt');
     res.json(submittedScores.map(entry => ({
       id: String(entry._id),
       name: entry.name,
       score: entry.score,
+      inputMode: entry.inputMode || 'PH',
       createdAt: entry.createdAt
     })));
   } catch (err) {
@@ -71,18 +74,20 @@ app.get('/api/scores/submitted', async (req, res) => {
 // POST: Save a new high score
 app.post('/api/scores', async (req, res) => {
   try {
-    const { name, score, playerId } = req.body || {};
+    const { name, score, playerId, inputMode = 'PH' } = req.body || {};
     const normalizedName = typeof name === 'string' ? name.trim() : '';
 
     if (!normalizedName || typeof score !== 'number' || !Number.isFinite(score) || score < 0 ||
-      typeof playerId !== 'string' || playerId.length < 16 || playerId.length > 64) {
-      return res.status(400).json({ error: 'Valid name, score, and player ID are required.' });
+      typeof playerId !== 'string' || playerId.length < 16 || playerId.length > 64 ||
+      !['PH', 'CU'].includes(inputMode)) {
+      return res.status(400).json({ error: 'Valid name, score, player ID, and input mode are required.' });
     }
 
     const newScore = new Score({
       name: normalizedName.substring(0, 12),
       score: Math.floor(score),
-      playerId
+      playerId,
+      inputMode
     });
 
     await newScore.save();
@@ -92,6 +97,7 @@ app.post('/api/scores', async (req, res) => {
         id: String(newScore._id),
         name: newScore.name,
         score: newScore.score,
+        inputMode: newScore.inputMode,
         createdAt: newScore.createdAt
       }
     });
